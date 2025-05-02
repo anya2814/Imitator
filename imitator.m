@@ -1,7 +1,15 @@
 % Параметры
-radius = 1000; % Радиус окружности
+radius = 100; % Радиус окружности
 center = [0, 0]; % Центр окружности
 deltaT = 0.5; % Шаг замеров
+falseObjProb = 0.3; % Вероятность увидеть ложную цель
+curr_time = 0; % Общее время
+
+% x_points - координаты по x
+% y_points - координаты по y
+% real_speed - реальная скорость на следующий отрезок (настоящий момент)
+% viewed_speed - наблюдаемая скорость за счет пути поделенного на время за последний отрезок
+
 figure;
 hold on;
 axis equal;
@@ -10,18 +18,24 @@ ylim([-radius, radius]);
 xlabel('X Axis');
 ylabel('Y Axis');
 
+% Параметры шумов (нормальное распределение)
+muX = 0; muY = 0; muS = 0; % Cреднее значение (x - для координат x, y - для координат y, s - для real_speed) 
+sigmaX = 1; sigmaY = 1; sigmaS = 2; % Новое стандартное отклонение
+
 % Установка скорости объекта
 n = 5; % Количество объектов
-speed = [25, 17, 30, 20, 35]; % Скорость (метры в секунду), должно быть n значений
-falseObjProb = 0.1; % Вероятность увидеть ложную цель
+real_speed = { [10], [17], [30], [50], [35] }; % Скорость (метры в секунду), должно быть n значений
 
 % Массивы для хранения предыдущих отметок
 x_points = {};
 y_points = {};
 
+
 for i = 1:n
-    x_points{end+1} = [0];
-    y_points{end+1} = [0];
+    time{i} = [0]; % Время замера
+    viewed_speed{i} = [0]; % Наблюдаемая скорость
+    x_points{i} = [0];
+    y_points{i} = [0];
 end
 
 % Массивы для хранения параметров
@@ -33,7 +47,7 @@ y_position = zeros(1,n);
 while true
     % Новая отметка (с координатами на границе окружности)
     for i = 1:n
-        if x_points{i} == [0]
+        if x_points{i} == [0] & isscalar(x_points{i})
             theta(i) = rand * 2 * pi;
             x_position(i) = radius * cos(theta(i));
             y_position(i) = radius * sin(theta(i)); 
@@ -44,6 +58,9 @@ while true
         else
             x_points{i}(end+1) = x_position(i);
             y_points{i}(end+1) = y_position(i);
+            time{i}(end+1) = curr_time;
+            viewed_speed{i}(end+1) = sqrt((x_points{i}(end)-x_points{i}(end-1))^2+(y_points{i}(end)-y_points{i}(end-1))^2) / (time{i}(end)-time{i}(end-1));
+            real_speed{i}(end+1) = real_speed{i}(end) + normrnd(muS, sigmaS);
         end
     end
     
@@ -85,9 +102,10 @@ while true
     end
 
     % Рассчитываем новое положение объекта
+    curr_time = curr_time + deltaT;
     for i = 1:n
-        x_position(i) = x_position(i) + speed(i) * deltaT * cos(theta(i));
-        y_position(i) = y_position(i) + speed(i) * deltaT * sin(theta(i));
+        x_position(i) = x_position(i) + real_speed{i}(end) * deltaT * cos(theta(i)) + normrnd(muX, sigmaX);
+        y_position(i) = y_position(i) + real_speed{i}(end) * deltaT * sin(theta(i)) + normrnd(muY, sigmaY);
     end
 
     % Проверяем, не вышел ли объект за пределы радиуса
@@ -95,6 +113,8 @@ while true
         if sqrt(x_position(i)^2 + y_position(i)^2) >= radius
             x_points{i} = [0];
             y_points{i} = [0];
+            time{i} = [curr_time];
+            real_speed{i} = real_speed{i}(1);
         end
     end
     
