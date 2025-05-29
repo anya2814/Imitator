@@ -1,7 +1,7 @@
 % параметры
-radius = 2000; % Радиус зоны обзора радара
+radius = 5000; % Радиус зоны обзора радара
 deltaT = 0.017; % Шаг времени моделирования
-falseObjProb = 0.03; % Вероятность появления ложной цели на каждую реальную цель
+falseObjProb = 0.05; % Вероятность появления ложной цели на каждую реальную цель
 curr_time = 0; % Текущее время
 
 % Графика
@@ -29,8 +29,8 @@ angle_resolution_deg = 30; % Разрешение луча радара (в гр
 angle_resolution_rad = deg2rad(angle_resolution_deg); % Переводим в радианы
 
 % Цели 
-n = 5;
-real_speed =  [20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
+n = 15;
+real_speed =  [20, 30, 15, 27, 35, 20, 30, 15, 27, 35, 20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
 min_speed = 10; max_speed = 40; % минимальная и максимальная скорость отслеживаемых объектов
 
 % Хранение данных
@@ -181,7 +181,7 @@ while true
                 
 	            % ищем минимальное расстояние 
                 for i = length(viewed_x):-1:1
-                    if abs(viewed_d(i)-pred_d) <= 3*sigmaD && abs(viewed_angle(i)-pred_angle) <= 3*sigmaAngle
+                    if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle
                         dist = sqrt((pred_x-viewed_x(i))^2+(pred_y-viewed_y(i)));
                         if dist < minDist
                             minDist = dist;
@@ -250,9 +250,9 @@ while true
                     % область видимости радара
                     angle_diff = min(mod(abs(pred_angle - radar_angle), 2*pi), ...
                              mod(abs(radar_angle - pred_angle), 2*pi));
-                    if angle_diff < angle_resolution_rad/2  
+                    if angle_diff < angle_resolution_rad/2 && (curr_time-tracks(t_id).timestamps(end)) > (full_rotation_time*1.5)
                         % если предсказанное положение цели попадает в область видимости но
-                        % подходящую отметку не нашли, в треке пропуск отметки
+                        % подходящую отметку не нашли, и прошел полный оборот, в треке пропуск отметки
                         tracks(t_id).missedDetections = tracks(t_id).missedDetections + 1;
                     end
                 end
@@ -267,8 +267,8 @@ while true
                 % проверяем расстояние 
                 for i = length(viewed_x):-1:1                   
                     distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2)
-                    max_distance = max_speed*(curr_time-tracks(t_id).timestamps(end)) + 30; % максимальная дистанция для попадания в строб
-                    min_distance = min_speed*(curr_time-tracks(t_id).timestamps(end)) - 30; % минимальная дистанция для попадания в строб
+                    max_distance = max_speed*(curr_time-tracks(t_id).timestamps(end)) + 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % максимальная дистанция для попадания в строб
+                    min_distance = min_speed*(curr_time-tracks(t_id).timestamps(end)) - 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % минимальная дистанция для попадания в строб
                     
                     if distance < max_distance && distance > min_distance
                         % если нужно усреднять с предыдущими, то это все еще первая точка
@@ -369,11 +369,22 @@ while true
     % анимация
     for t_idx = 1:length(tracks)
         plot(tracks(t_idx).x, tracks(t_idx).y, '-o', ...
-             'MarkerFaceColor','r', 'Color', 'r', 'MarkerEdgeColor','k', 'MarkerSize',7);
-        text(tracks(t_idx).x, tracks(t_idx).y, num2str(tracks(t_idx).id), ...
+             'MarkerFaceColor', "#80B3FF", 'Color', "k", 'LineWidth', 2, 'MarkerEdgeColor','k', 'MarkerSize',4);
+        if length(tracks(t_idx).x) > 1
+            plot(tracks(t_idx).x(end), tracks(t_idx).y(end), '-o', ...
+                'MarkerFaceColor','blue', 'Color', "k", 'MarkerEdgeColor','k', 'MarkerSize',7);
+        else
+            plot(tracks(t_idx).x(end), tracks(t_idx).y(end), '-o', ...
+                'MarkerFaceColor',"k", 'Color', "k", 'MarkerEdgeColor','k', 'MarkerSize',4);
+        end
+        text(tracks(t_idx).x(end), tracks(t_idx).y(end), num2str(tracks(t_idx).id), ...
              'VerticalAlignment','bottom', 'HorizontalAlignment','right');
     end
 
     drawnow;
+    if curr_time > 100
+        stop = 0; % Чтобы смотреть результат
+    end
     curr_time = curr_time + deltaT;
+    
 end
