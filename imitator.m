@@ -1,7 +1,7 @@
 % параметры
-radius = 500; % Радиус зоны обзора радара
+radius = 2000; % Радиус зоны обзора радара
 deltaT = 0.017; % Шаг времени моделирования
-falseObjProb = 0.1; % Вероятность появления ложной цели
+falseObjProb = 0.03; % Вероятность появления ложной цели на каждую реальную цель
 curr_time = 0; % Текущее время
 
 % Графика
@@ -19,7 +19,7 @@ sigmaX = 1; sigmaY = 1;
 
 % Параметры наблюдений (с шумами)
 muD = 0; muAngle = 0; muTime = 0;
-sigmaD = 1; sigmaAngle = deg2rad(1); sigmaTime = 0.01;
+sigmaD = 1; sigmaAngle = deg2rad(0.5); sigmaTime = 0.01;
 
 % Радар 
 radar_angle = 0; % Начальный угол луча
@@ -30,7 +30,7 @@ angle_resolution_rad = deg2rad(angle_resolution_deg); % Переводим в р
 
 % Цели 
 n = 5;
-real_speed =  [20, 25, 30, 40, 10]; % Скорости целей в метрах в секунду
+real_speed =  [20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
 min_speed = 10; max_speed = 40; % минимальная и максимальная скорость отслеживаемых объектов
 
 % Хранение данных
@@ -154,8 +154,8 @@ while true
             viewed_angle = [viewed_angle, theta0];
             viewed_time = [viewed_time, curr_time + muTime + sigmaTime * randn];
 
-            viewed_x = [viewed_x, distance*cos(viewed_angle(end))];
-            viewed_y = [viewed_y, distance*sin(viewed_angle(end))];
+            viewed_x = [viewed_x, r0*cos(viewed_angle(end))];
+            viewed_y = [viewed_y, r0*sin(viewed_angle(end))];
 
             plot(viewed_x(end), viewed_y(end), '*', 'Color', "black"); 
         end
@@ -167,14 +167,15 @@ while true
         % пробегаемся по имеющимся траекториям и каждой присваиваем 
         % ближайшую к предсказанной отметку от радара, если она
         % удовлетворяет условиям о близости
+
         for t_id = 1:length(tracks)
             bestId = -1;
-            if length(tracks(t_id)) > 1 % проверка что в треке есть хотя бы 2 точки
+            if length(tracks(t_id).x) > 1 % проверка что в треке есть хотя бы 2 точки
 	            minDist = Inf;
                 % по старым x и y вычисляем предсказание x и y, и по ним
                 % предсказание дистанции
-                pred_x = tracks(t_id).x(end) + tracks(t_id).vel(end) * (curr_time - tracks(t_id).timestamps(end)) * cos(tracks(t_id).direction(end));
-                pred_y = tracks(t_id).y(end) + tracks(t_id).vel(end) * (curr_time - tracks(t_id).timestamps(end)) * sin(tracks(t_id).direction(end));
+                pred_x = tracks(t_id).x(end) + tracks(t_id).velocity(end) * (curr_time - tracks(t_id).timestamps(end)) * cos(tracks(t_id).direction(end));
+                pred_y = tracks(t_id).y(end) + tracks(t_id).velocity(end) * (curr_time - tracks(t_id).timestamps(end)) * sin(tracks(t_id).direction(end));
                 pred_d = sqrt(pred_x^2 + pred_y^2);
                 pred_angle = mod(atan2(pred_y, pred_x), 2*pi);
                 
@@ -193,9 +194,8 @@ while true
                     % добавляем лучшую отметку
     
                     % если нужно усреднять с предыдущими
-                    if curr_time - tracks(t_id).timestamps(end+1) < 0.7*full_rotation_time
-                        % сюда нужно вставить фильтр Калмана
-    
+                    if curr_time - tracks(t_id).timestamps(end) < 0.7*full_rotation_time
+
                         % Обновляем счётчики
                         tracks(t_id).countForAverage = tracks(t_id).countForAverage + 1;
     
@@ -216,7 +216,6 @@ while true
                         tracks(t_id).direction(end) = mod(atan2(dy, dx), 2*pi);
                         
                     else % если не нужно усреднять
-                        % сюда нужно вставить фильтр Калмана
                         tracks(t_id).distance(end+1) = viewed_d(bestId);
                         tracks(t_id).angle(end+1) = viewed_angle(bestId);
                         tracks(t_id).x(end+1) = viewed_x(bestId);
@@ -261,19 +260,19 @@ while true
         end
 
         %% Затем находим вторые точки для траектории (завязка траектории)
-        for t_id = 1:length(tracks)
+        for t_id = length(tracks):-1:1
             if length(tracks(t_id)) == 1 % проверка что в треке 1 точка
                 flag = 0; % для первой подходящей точки записываем в этот же трек, 
                             % для других подходящих копируем трек
                 % проверяем расстояние 
-                for i = length(viewed_x):-1:1
-                    distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2);
-                    max_distance = max_speed*(curr_time-tracks(t_id).timestamps(1)) + 5; % максимальная дистанция для попадания в строб
-                    min_distance = min_speed*(curr_time-tracks(t_id).timestamps(1)) - 5; % минимальная дистанция для попадания в строб
+                for i = length(viewed_x):-1:1                   
+                    distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2)
+                    max_distance = max_speed*(curr_time-tracks(t_id).timestamps(end)) + 30; % максимальная дистанция для попадания в строб
+                    min_distance = min_speed*(curr_time-tracks(t_id).timestamps(end)) - 30; % минимальная дистанция для попадания в строб
                     
                     if distance < max_distance && distance > min_distance
                         % если нужно усреднять с предыдущими, то это все еще первая точка
-                        if curr_time - tracks(t_id).timestamps(1) < 1.5*deltaT 
+                        if curr_time - tracks(t_id).timestamps(1) < 0.7*full_rotation_time
                             % Обновляем счётчики
                             tracks(t_id).countForAverage = tracks(t_id).countForAverage + 1;
     
@@ -285,14 +284,15 @@ while true
         
                             % Усредняем временную метку
                             tracks(t_id).timestamps(end) = (tracks(t_id).timestamps(end)*(tracks(t_id).countForAverage-1) + curr_time)/tracks(t_id).countForAverage;
-                        
+                            tracks(t_id)
+                            curr_time
                         else % если не нужно усреднять
-                            if flag % Копируем трек
-                                new_track = tracks(t_id);  % Копирование всех полей текущего трека
-                                new_track.id = max([tracks.id]) + 1;  % Увеличиваем ID для нового трека
-                                t_id = new_track.id;
-                                tracks(end + 1) = new_track;  % Добавляем новый трек в массив tracks
-                            end % Вставляем точку
+                            %if flag % Копируем трек
+                            %    new_track = tracks(t_id);  % Копирование всех полей текущего трека
+                            %    new_track.id = max([tracks.id]) + 1;  % Увеличиваем ID для нового трека
+                            %    t_id = new_track.id;
+                            %    tracks(end + 1) = new_track;  % Добавляем новый трек в массив tracks
+                            %end % Вставляем точку
 
                             tracks(t_id).distance(end+1) = viewed_d(i);
                             tracks(t_id).angle(end+1) = viewed_angle(i);
@@ -360,10 +360,16 @@ while true
         tracks = tracks([tracks.missedDetections] < max_missed_frames);
     end
     
+    % Вот сюда вставляем фильтр.
+    % Есть массив структур tracks, треки это tracks(i).
+    % Есть замеры координат, скорости начиная со второй точки и дальности и угла измерения.
+    % Если нужно сохранять матрицы с предыдущих шагов, можно их сохранять в
+    % этот же массив структур.
+
     % анимация
     for t_idx = 1:length(tracks)
         plot(tracks(t_idx).x, tracks(t_idx).y, '-o', ...
-             'MarkerFaceColor','r', 'MarkerEdgeColor','k', 'MarkerSize',8);
+             'MarkerFaceColor','r', 'Color', 'r', 'MarkerEdgeColor','k', 'MarkerSize',7);
         text(tracks(t_idx).x, tracks(t_idx).y, num2str(tracks(t_idx).id), ...
              'VerticalAlignment','bottom', 'HorizontalAlignment','right');
     end
