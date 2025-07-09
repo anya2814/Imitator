@@ -19,7 +19,7 @@ sigmaX = 1; sigmaY = 1;
 
 % Параметры наблюдений (с шумами)
 muD = 0; muAngle = 0; muTime = 0;
-sigmaD = 1; sigmaAngle = deg2rad(0.5); sigmaTime = 0.01;
+sigmaD = sqrt(3); sigmaAngle = deg2rad(0.5); sigmaTime = sqrt(0.01);
 
 % Радар 
 radar_angle = 0; % Начальный угол луча
@@ -50,7 +50,8 @@ emptyObj = struct( ...
     'velocity', [], ...
     'countForAverage', 0, ...
     'missedDetections', 0, ...
-    'timestamps', []);
+    'timestamps', [], ...
+    'P', eye(4));
 
 % Пустой массив структур
 tracks = repmat(emptyObj, 0, 1);
@@ -76,20 +77,26 @@ while true
     radar_angle = mod(radar_angle + omega * deltaT, 2 * pi);
 
     % Рисуем окружность
-    theta_circle = linspace(0, 2*pi, 100);
-    plot(radius*cos(theta_circle), radius*sin(theta_circle), 'k-', 'HandleVisibility','off');
+    theta_circle = linspace(0, 2*pi, 50);
+    plot(radius*cos(theta_circle), radius*sin(theta_circle), 'k--', 'HandleVisibility','off');
+    plot(1000*cos(theta_circle), 1000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+    plot(2000*cos(theta_circle), 2000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+    plot(3000*cos(theta_circle), 3000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+    plot(4000*cos(theta_circle), 4000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+    plot([-radius radius], [0 0], 'k--', 'LineWidth', 0.2);
+    plot([0 0], [-radius radius], 'k--', 'LineWidth', 0.2);
     plot(0, 0, '.', 'Color', "#000000", 'HandleVisibility','off');
 
     % Рисуем луч радара
     beam_x = radius * cos(radar_angle);
     beam_y = radius * sin(radar_angle);
-    plot([0 beam_x], [0 beam_y], '--', 'LineWidth', 0.5, 'Color', "#000000");
+    plot([0 beam_x], [0 beam_y], 'g-', 'LineWidth', 0.5, 'Color', "#000000");
     beam_x = radius * cos(radar_angle + angle_resolution_rad/2);
     beam_y = radius * sin(radar_angle + angle_resolution_rad/2);
-    plot([0 beam_x], [0 beam_y], 'b--', 'LineWidth', 0.5);
+    plot([0 beam_x], [0 beam_y], 'b-', 'LineWidth', 0.5);
     beam_x = radius * cos(radar_angle - angle_resolution_rad/2);
     beam_y = radius * sin(radar_angle - angle_resolution_rad/2);
-    plot([0 beam_x], [0 beam_y], 'b--', 'LineWidth', 0.5, 'Color', "b");
+    plot([0 beam_x], [0 beam_y], 'b-', 'LineWidth', 0.5, 'Color', "b");
 
     % Цикл
     for i = 1:n
@@ -178,8 +185,8 @@ while true
                 pred_y = tracks(t_id).y(end) + tracks(t_id).velocity(end) * (curr_time - tracks(t_id).timestamps(end)) * sin(tracks(t_id).direction(end));
                 pred_d = sqrt(pred_x^2 + pred_y^2);
                 pred_angle = mod(atan2(pred_y, pred_x), 2*pi);
-                
-	            % ищем минимальное расстояние 
+
+                % ищем минимальное расстояние 
                 for i = length(viewed_x):-1:1
                     if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle
                         dist = sqrt((pred_x-viewed_x(i))^2+(pred_y-viewed_y(i)));
@@ -266,7 +273,7 @@ while true
                             % для других подходящих копируем трек
                 % проверяем расстояние 
                 for i = length(viewed_x):-1:1                   
-                    distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2)
+                    distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2);
                     max_distance = max_speed*(curr_time-tracks(t_id).timestamps(end)) + 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % максимальная дистанция для попадания в строб
                     min_distance = min_speed*(curr_time-tracks(t_id).timestamps(end)) - 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % минимальная дистанция для попадания в строб
                     
@@ -284,8 +291,7 @@ while true
         
                             % Усредняем временную метку
                             tracks(t_id).timestamps(end) = (tracks(t_id).timestamps(end)*(tracks(t_id).countForAverage-1) + curr_time)/tracks(t_id).countForAverage;
-                            tracks(t_id)
-                            curr_time
+
                         else % если не нужно усреднять
                             %if flag % Копируем трек
                             %    new_track = tracks(t_id);  % Копирование всех полей текущего трека
@@ -351,6 +357,7 @@ while true
             new_track.direction = [NaN]; 	% угол направления и скорость пока неизвестны
             new_track.velocity = [NaN];
             new_track.countForAverage = 1;
+            new_track.P = eye(4);
             tracks(end+1) = new_track;
         end
     end
@@ -360,29 +367,38 @@ while true
         tracks = tracks([tracks.missedDetections] < max_missed_frames);
     end
     
-    % Вот сюда вставляем фильтр.
-    % Есть массив структур tracks, треки это tracks(i).
-    % Есть замеры координат, скорости начиная со второй точки и дальности и угла измерения.
-    % Если нужно сохранять матрицы с предыдущих шагов, можно их сохранять в
-    % этот же массив структур.
+    % Здесь фильтр Калмана
+    for t_id = 1:length(tracks)
+        if length(tracks(t_id).x) > 2
+            dt = tracks(t_id).timestamps(end) - tracks(t_id).timestamps(end-1);
+            [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter(tracks(t_id).x(end-1), tracks(t_id).y(end-1), tracks(t_id).direction(end-1), tracks(t_id).velocity(end-1), ...
+                tracks(t_id).x(end),  tracks(t_id).y(end), tracks(t_id).direction(end), tracks(t_id).velocity(end), tracks(t_id).P, dt);
+
+            tracks(t_id).x(end) = new_x;
+            tracks(t_id).y(end) = new_y;
+            tracks(t_id).velocity(end) = new_v;
+            tracks(t_id).direction(end) = new_theta;
+            tracks(t_id).P = new_P;
+        end
+    end
 
     % анимация
-    for t_idx = 1:length(tracks)
-        plot(tracks(t_idx).x, tracks(t_idx).y, '-o', ...
-             'MarkerFaceColor', "#80B3FF", 'Color', "k", 'LineWidth', 2, 'MarkerEdgeColor','k', 'MarkerSize',4);
-        if length(tracks(t_idx).x) > 1
-            plot(tracks(t_idx).x(end), tracks(t_idx).y(end), '-o', ...
-                'MarkerFaceColor','blue', 'Color', "k", 'MarkerEdgeColor','k', 'MarkerSize',7);
-        else
-            plot(tracks(t_idx).x(end), tracks(t_idx).y(end), '-o', ...
-                'MarkerFaceColor',"k", 'Color', "k", 'MarkerEdgeColor','k', 'MarkerSize',4);
-        end
-        text(tracks(t_idx).x(end), tracks(t_idx).y(end), num2str(tracks(t_idx).id), ...
+    for t_id = 1:length(tracks)
+        plot(tracks(t_id).x, tracks(t_id).y, '-o', ...
+             'MarkerFaceColor', "#80B3FF", 'Color', "k", 'LineWidth', 2, 'MarkerEdgeColor',"k", 'MarkerSize',4);
+        if length(tracks(t_id).x) > 1
+            plot(tracks(t_id).x(end), tracks(t_id).y(end), '-o', ...
+                'MarkerFaceColor','blue', 'Color', "k", 'MarkerEdgeColor',"#80B3FF", 'MarkerSize',7);
+            text(tracks(t_id).x(end), tracks(t_id).y(end), num2str(tracks(t_id).id), ...
              'VerticalAlignment','bottom', 'HorizontalAlignment','right');
+        else
+            plot(tracks(t_id).x(end), tracks(t_id).y(end), '-o', ...
+                'MarkerFaceColor', [0.5 0.5 0.5], 'Color', "k", 'MarkerEdgeColor', [0.5 0.5 0.5], 'MarkerSize',3);
+        end
     end
 
     drawnow;
-    if curr_time > 100
+    if curr_time > 30
         stop = 0; % Чтобы смотреть результат
     end
     curr_time = curr_time + deltaT;
