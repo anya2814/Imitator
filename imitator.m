@@ -1,9 +1,9 @@
-% параметры
+
 radius = 5000; % Радиус зоны обзора радара
 deltaT = 0.017; % Шаг времени моделирования
 falseObjProb = 0.05; % Вероятность появления ложной цели на каждую реальную цель
 curr_time = 0; % Текущее время
-
+n = 1000;
 % Графика
 figure;
 hold on;
@@ -16,10 +16,21 @@ ylabel('Y Axis');
 % Параметры шума
 muX = 0; muY = 0;
 sigmaX = 1; sigmaY = 1;
+insideBeam = false(n,1);
+entrance_time = NaN(n,1);   % Время входа каждой цели в луч
+exit_time = NaN(n,1);       % Время выхода каждой цели из луча
+inside_time = NaN(n,1);
+rotation_counter=zeros(n,1, 'int32');
+correct_link_counter=0;
+incorrect_link_counter=0;
+
+
+
 
 % Параметры наблюдений (с шумами)
 muD = 0; muAngle = 0; muTime = 0;
 sigmaD = sqrt(3); sigmaAngle = deg2rad(0.5); sigmaTime = sqrt(0.01);
+
 
 % Радар 
 radar_angle = 0; % Начальный угол луча
@@ -59,7 +70,7 @@ tracks = repmat(emptyObj, 0, 1);
 theta = zeros(1,n); % Направление движения
 x_position = zeros(1,n);
 y_position = zeros(1,n);
-
+origin = datetime('now');
 max_missed_frames = 5; % Максимальное число пропусков перед удалением
 
 while true
@@ -141,14 +152,39 @@ while true
 
             viewed_x = [viewed_x, distance*cos(viewed_angle(end))];
             viewed_y = [viewed_y, distance*sin(viewed_angle(end))];
-
+            % Если раньше была вне луча, регистрируем вход
+        if ~insideBeam(i)
+            insideBeam(i) = true;
+            fprintf('Цель №%d вошла в луч радара\n', i);
+       
+            
+            % Регистрация события входа
+            entrance_time(i) = seconds(datetime("now")-origin);
+            
+        end
             plot(viewed_x(end), viewed_y(end), 'o',...
                 'MarkerFaceColor','g','MarkerEdgeColor','g','MarkerSize',10);
 
             %text(viewed_x{i}(end), viewed_y{i}(end), ...
                 %sprintf('Angle: %.2f°\nDistance: %.2f', rad2deg(viewed_angle{i}(end)), distance), ...
                 %'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'right');
+        else
+        % Если была в луче и теперь выходит, регистрируем выход
+        if insideBeam(i)
+            insideBeam(i) = false;
+            
+            % Регистрация события выхода
+            exit_time(i) = seconds(datetime("now")-origin);
+            
+            inside_time(i) = exit_time(i)-entrance_time(i);
+            rotation_counter(i)=rotation_counter(i)+1;
+            fprintf('Цель №%d покинула луч радара\n', i);
+            fprintf('%f\n',inside_time(i));
+            fprintf('%f\n',rotation_counter(i));
+
+            
         end
+    end
 
         %Добавляем ложные отметки к массиву отметок полученных на данном
         %шаге (сделано)
@@ -358,6 +394,26 @@ while true
             new_track.velocity = [NaN];
             new_track.countForAverage = 1;
             new_track.P = eye(4);
+            % Проверяем наличие связи между новыми точками и существующими траекториями
+    linked = false;
+    for j = 1:length(tracks)
+        if length(tracks(j).x) > 1 % Проверяем, есть ли уже сформированная траектория
+            dx = tracks(j).x(end) - viewed_x(i);
+            dy = tracks(j).y(end) - viewed_y(i);
+            distance = sqrt(dx^2 + dy^2);
+            
+            % Проверяем условия соответствия
+            if distance < 100 % произвольное допустимое расстояние для вязания траектории
+                correct_link_counter = correct_link_counter + 1;
+                linked = true;
+                break;
+            end
+        end
+    end
+    
+    if ~linked
+        incorrect_link_counter = incorrect_link_counter + 1;
+    end
             tracks(end+1) = new_track;
         end
     end
@@ -371,7 +427,7 @@ while true
     for t_id = 1:length(tracks)
         if length(tracks(t_id).x) > 2
             dt = tracks(t_id).timestamps(end) - tracks(t_id).timestamps(end-1);
-            [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter(tracks(t_id).x(end-1), tracks(t_id).y(end-1), tracks(t_id).direction(end-1), tracks(t_id).velocity(end-1), ...
+            [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter1(tracks(t_id).x(end-1), tracks(t_id).y(end-1), tracks(t_id).direction(end-1), tracks(t_id).velocity(end-1), ...
                 tracks(t_id).x(end),  tracks(t_id).y(end), tracks(t_id).direction(end), tracks(t_id).velocity(end), tracks(t_id).P, dt);
 
             tracks(t_id).x(end) = new_x;
