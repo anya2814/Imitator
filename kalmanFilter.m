@@ -1,4 +1,4 @@
-function [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter(prev_x, prev_y, prev_theta, prev_v, viewed_x, viewed_y, viewed_theta, viewed_v, P, dt)
+function [new_x, new_y, new_theta, new_v, new_P, new_vx, new_vy] = kalmanFilter(prev_x, prev_y, prev_theta, prev_v, viewed_x, viewed_y, P, dt)
     prev_vx = prev_v * cos(prev_theta);
     prev_vy = prev_v * sin(prev_theta);
 

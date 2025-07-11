@@ -1,0 +1,207 @@
+
+% Параметры моделирования
+radius = 5000; % Радиус зоны обзора радара
+deltaT = 0.017;
+falseObjProb = 0.05;
+curr_time = 0;
+
+% Параметры шума
+muX = 0; muY = 0;
+sigmaX = 1; sigmaY = 1;
+
+% Параметры наблюдений
+sigmaD = sqrt(3);
+sigmaAngle = deg2rad(0.5);
+
+% Радар
+full_rotation_time = 4.5;
+omega = 2 * pi / full_rotation_time;
+angle_resolution_deg = 30;
+angle_resolution_rad = deg2rad(angle_resolution_deg);
+
+% Цели
+n = 15;
+real_speed = [20, 30, 15, 27, 35, 20, 30, 15, 27, 35, 20, 30, 15, 27, 35];
+min_speed = 10; max_speed = 40;
+
+% Флаг: рисовать график или нет
+DRAW_GRAPHICS = true;
+
+% Инициализация целей
+theta = randi([0, 2*pi], 1, n);
+x_position = zeros(1, n);
+y_position = zeros(1, n);
+for i = 1:n
+    start_angle = 2 * pi * rand();
+    x_position(i) = radius * cos(start_angle);
+    y_position(i) = radius * sin(start_angle);
+end
+
+% Трекеры
+emptyObj = struct('id', 0, 'x', [], 'y', [], 'timestamps', [], ...
+                  'velocity', [], 'direction', [], 'missedDetections', 0);
+tracks = repmat(emptyObj, 0, 1);
+max_missed_frames = 5;
+track_id_counter = 1;
+
+% Главный цикл
+while curr_time < 30
+    radar_angle = mod(radar_angle + omega * deltaT, 2 * pi);
+    
+    % Генерация истинных координат
+    dx = real_speed .* deltaT .* cos(theta) + sigmaX * randn(size(real_speed)) * deltaT;
+    dy = real_speed .* deltaT .* sin(theta) + sigmaY * randn(size(real_speed)) * deltaT;
+    x_position = x_position + dx;
+    y_position = y_position + dy;
+
+    % Удаление целей за границей и создание новых
+    for i = 1:n
+        if sqrt(x_position(i)^2 + y_position(i)^2) >= radius
+            start_angle = 2 * pi * rand();
+            x_position(i) = radius * cos(start_angle);
+            y_position(i) = radius * sin(start_angle);
+            theta(i) = mod(atan2(-y_position(i), -x_position(i)), 2*pi) + 2*rand()-1;
+        end
+    end
+
+    % Обнаружение целей радаром
+    target_angles = mod(atan2(y_position, x_position), 2*pi);
+    angle_diffs = min(mod(abs(target_angles - radar_angle), 2*pi), ...
+                      mod(abs(radar_angle - target_angles), 2*pi));
+    detected = angle_diffs < angle_resolution_rad/2;
+
+    viewed_x = [];
+    viewed_y = [];
+
+    if any(detected)
+        distances = sqrt(x_position(detected).^2 + y_position(detected).^2) + sigmaD * randn(sum(detected), 1);
+        angles = target_angles(detected)' + sigmaAngle * randn(1, sum(detected));
+        viewed_x = distances .* cos(angles);
+        viewed_y = distances .* sin(angles);
+    end
+
+    % Ложные отметки
+    num_false = binornd(n, falseObjProb);
+    if num_false > 0
+        angles_false = radar_angle + (2*rand(1, num_false)-1)*(angle_resolution_rad/2);
+        dist_false = sqrt(rand(1, num_false)) * radius;
+        viewed_x = [viewed_x, dist_false .* cos(angles_false)];
+        viewed_y = [viewed_y, dist_false .* sin(angles_false)];
+    end
+
+    % Отождествление с треками
+    if ~isempty(viewed_x)
+        track_positions = cell2mat(cellfun(@(t) [t.x(end); t.y(end)], tracks, 'UniformOutput', false)');
+        [~, idx] = pdist2(track_positions', [viewed_x; viewed_y]', 'euclidean', 'Smallest', 1);
+
+        matched_tracks = false(1, length(tracks));
+        for i = 1:length(idx)
+            if ~isnan(idx(i))
+                tracks(idx(i)).x(end+1) = viewed_x(i);
+                tracks(idx(i)).y(end+1) = viewed_y(i);
+                tracks(idx(i)).timestamps(end+1) = curr_time;
+                tracks(idx(i)).missedDetections = 0;
+                matched_tracks(idx(i)) = true;
+            end
+        end
+
+        % Пропущенные 
+        for i = 1:length(tracks)
+            if ~matched_tracks(i)
+                tracks(i).missedDetections = tracks(i).missedDetections + 1;
+            end
+        end
+
+Евгения, [10.07.2025 22:09]
+% Новые треки
+        new_indices = find(~matched_tracks);
+        for i = 1:length(new_indices)
+            new_track = emptyObj;
+            new_track.id = track_id_counter;
+            new_track.x = viewed_x(i);
+            new_track.y = viewed_y(i);
+            new_track.timestamps = curr_time;
+            new_track.direction = NaN;
+            new_track.velocity = NaN;
+            tracks(end+1) = new_track;
+            track_id_counter = track_id_counter + 1;
+        end
+    end
+
+    % Удаление старых треков
+    if ~isempty(tracks)
+        tracks = tracks([tracks.missedDetections] <= max_missed_frames);
+    end
+
+    % Анимация
+
+    if DRAW_GRAPHICS
+    
+       % Очистка текущих осей для новой отрисовки
+cla;
+
+% Рисуем окружности зон обзора радара
+theta_circle = linspace(0, 2*pi, 50);
+plot(radius*cos(theta_circle), radius*sin(theta_circle), 'k--', 'HandleVisibility','off');
+plot(1000*cos(theta_circle), 1000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+plot(2000*cos(theta_circle), 2000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+plot(3000*cos(theta_circle), 3000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+plot(4000*cos(theta_circle), 4000*sin(theta_circle), 'k--', 'LineWidth', 0.2, 'HandleVisibility','off');
+
+% Рисуем координатные оси
+plot([-radius radius], [0 0], 'k--', 'LineWidth', 0.2);
+plot([0 0], [-radius radius], 'k--', 'LineWidth', 0.2);
+plot(0, 0, '.', 'Color', "#000000", 'HandleVisibility','off');
+
+% Рисуем луч радара
+beam_x = radius * cos(radar_angle);
+beam_y = radius * sin(radar_angle);
+plot([0 beam_x], [0 beam_y], 'g-', 'LineWidth', 0.5, 'Color', "#000000");
+beam_x = radius * cos(radar_angle + angle_resolution_rad/2);
+beam_y = radius * sin(radar_angle + angle_resolution_rad/2);
+plot([0 beam_x], [0 beam_y], 'b-', 'LineWidth', 0.5);
+beam_x = radius * cos(radar_angle - angle_resolution_rad/2);
+beam_y = radius * sin(radar_angle - angle_resolution_rad/2);
+plot([0 beam_x], [0 beam_y], 'b-', 'LineWidth', 0.5, 'Color', "b");
+
+% Рисуем реальные траектории целей
+for i = 1:n
+    if length(true_x{i}) > 1
+        plot(true_x{i}, true_y{i}, '--k');
+    end
+end
+
+% Рисуем обнаруженные отметки (реальные цели)
+for k = 1:length(viewed_x)
+    plot(viewed_x(k), viewed_y(k), 'o',...
+         'MarkerFaceColor','g','MarkerEdgeColor','g','MarkerSize',10);
+end
+
+% Рисуем ложные отметки
+for k = 1:length(viewed_x)
+    % Предполагается, что ложные отметки имеют определенный цвет или стиль
+    plot(viewed_x(k), viewed_y(k), '*', 'Color', "black"); 
+end
+
+% Рисуем треки (траектории)
+for t_id = 1:length(tracks)
+    plot(tracks(t_id).x, tracks(t_id).y, '-o', ...
+         'MarkerFaceColor', "#80B3FF", 'Color', "k", 'LineWidth', 2, 'MarkerEdgeColor',"k", 'MarkerSize',4);
+    if length(tracks(t_id).x) > 1
+        plot(tracks(t_id).x(end), tracks(t_id).y(end), '-o', ...
+             'MarkerFaceColor','blue', 'Color', "k", 'MarkerEdgeColor',"#80B3FF", 'MarkerSize',7);
+        text(tracks(t_id).x(end), tracks(t_id).y(end), num2str(tracks(t_id).id), ...
+             'VerticalAlignment','bottom', 'HorizontalAlignment','right');
+    else
+        plot(tracks(t_id).x(end), tracks(t_id).y(end), '-o', ...
+             'MarkerFaceColor', [0.5 0.5 0.5], 'Color', "k", 'MarkerEdgeColor', [0.5 0.5 0.5], 'MarkerSize',3);
+    end
+end
+
+% Обновление графики
+drawnow;
+
+    end
+    
+    curr_time = curr_time + deltaT;
+end

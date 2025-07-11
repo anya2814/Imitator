@@ -24,24 +24,27 @@ rotation_counter=zeros(n,1, 'int32');
 correct_link_counter=0;
 incorrect_link_counter=0;
 
-
-
+H = [1 0 0 0;
+         0 1 0 0];          % матрица наблюдений для стробов отождествления
+gamma = 4.605;   % квантиль хи-квадрат для 0.9
+%gamma = 5.991;   % квантиль хи-квадрат для 0.95
+%gamma = 9.210;   % квантиль хи-квадрат для 0.99
 
 % Параметры наблюдений (с шумами)
 muD = 0; muAngle = 0; muTime = 0;
-sigmaD = sqrt(3); sigmaAngle = deg2rad(0.5); sigmaTime = sqrt(0.01);
+sigmaD = 5; sigmaAngle = deg2rad(0.5); sigmaTime = sqrt(0.05);
 
 
 % Радар 
 radar_angle = 0; % Начальный угол луча
-full_rotation_time = 4.5; % Полный оборот за 4.5 секунды
+full_rotation_time = 2.5; % Полный оборот за 4.5 секунды
 omega = 2 * pi / full_rotation_time; % Угловая скорость
 angle_resolution_deg = 30; % Разрешение луча радара (в градусах)
 angle_resolution_rad = deg2rad(angle_resolution_deg); % Переводим в радианы
 
 % Цели 
-n = 15;
-real_speed =  [20, 30, 15, 27, 35, 20, 30, 15, 27, 35, 20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
+n = 10;
+real_speed =  [20, 30, 15, 27, 35, 20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
 min_speed = 10; max_speed = 40; % минимальная и максимальная скорость отслеживаемых объектов
 
 % Хранение данных
@@ -224,8 +227,44 @@ while true
 
                 % ищем минимальное расстояние 
                 for i = length(viewed_x):-1:1
-                    if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle
+                    % вот здесь изменения 05.07 проверка попадания в строб отождествления
+                    % прошлая проверка
+                    %if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle
+                    
+                    % применяем по этим вычислениям фильтр Калмана чтобы
+                    % получить матрицу P. но это используем только чтобы
+                    % присвоить отметку траектории а не сохраняем а
+                    % окончательно фильтруем в конце
+                    dx = viewed_x(i) - tracks(t_id).x(end);
+                    dy = viewed_y(i) - tracks(t_id).y(end);
+                    dt = curr_time - tracks(t_id).timestamps(end);
+                    tracks(t_id).velocity(end) = hypot(dx, dy) / dt;
+
+                    [new_x, new_y, new_vx, new_vy, new_P] = kalmanPredictOnly(...
+                        tracks(t_id).x(end), ...
+                        tracks(t_id).y(end), ...
+                        tracks(t_id).velocity(end), ...
+                        tracks(t_id).direction(end), ...
+                        tracks(t_id).P, ...
+                        dt);
+
+                    x_prediction = [new_x; new_y; new_vx; new_vy];
+                    z = [viewed_x(i); viewed_y(i)];
+                    v = z - H*x_prediction;
+
+                    a = mod(atan2(viewed_y(i), viewed_x(i)), 2*pi);
+                    L = [sin(a) -cos(a); cos(a) sin(a)];
+                    d = sqrt(viewed_x(i)^2 + viewed_y(i)^2);
+                    Rb = diag([sigmaD^2, min(log1p(d)^2*sigmaAngle, 25)]);
+                    R = L*Rb*L';
+                    S = H*new_P*H' + R;
+                    S = S + 1e-6 * eye(2);  % регуляризация
+                    inv(S)
+                    v' * inv(S) * v
+                    if v' * inv(S) * v <= gamma
+                        v' * inv(S) * v
                         dist = sqrt((pred_x-viewed_x(i))^2+(pred_y-viewed_y(i)));
+                        dist
                         if dist < minDist
                             minDist = dist;
                             bestId = i;
@@ -427,14 +466,14 @@ while true
     for t_id = 1:length(tracks)
         if length(tracks(t_id).x) > 2
             dt = tracks(t_id).timestamps(end) - tracks(t_id).timestamps(end-1);
-            [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter1(tracks(t_id).x(end-1), tracks(t_id).y(end-1), tracks(t_id).direction(end-1), tracks(t_id).velocity(end-1), ...
-                tracks(t_id).x(end),  tracks(t_id).y(end), tracks(t_id).direction(end), tracks(t_id).velocity(end), tracks(t_id).P, dt);
+            % [new_x, new_y, new_theta, new_v, new_P, new_vx, new_vy] = kalmanFilter(tracks(t_id).x(end-1), tracks(t_id).y(end-1), tracks(t_id).direction(end-1), tracks(t_id).velocity(end-1), ...
+            %    tracks(t_id).x(end),  tracks(t_id).y(end), tracks(t_id).P, dt);
 
-            tracks(t_id).x(end) = new_x;
-            tracks(t_id).y(end) = new_y;
-            tracks(t_id).velocity(end) = new_v;
-            tracks(t_id).direction(end) = new_theta;
-            tracks(t_id).P = new_P;
+            %tracks(t_id).x(end) = new_x;
+            %tracks(t_id).y(end) = new_y;
+            %tracks(t_id).velocity(end) = new_v;
+            %tracks(t_id).direction(end) = new_theta;
+            %tracks(t_id).P = new_P;
         end
     end
 
