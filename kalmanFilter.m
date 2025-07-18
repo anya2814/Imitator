@@ -13,7 +13,7 @@ function [new_x, new_y, new_theta, new_v, new_P] = kalmanFilter(prev_x, prev_y, 
          0 1 0 dt;
          0 0 1 0;
          0 0 0 1];
-    
+   
     %% 2. Модель наблюдений (H)
     H = [1 0 0 0;
          0 1 0 0;

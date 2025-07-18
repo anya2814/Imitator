@@ -161,7 +161,7 @@ while true
 
             viewed_x = [viewed_x, distance*cos(viewed_angle(end))];
             viewed_y = [viewed_y, distance*sin(viewed_angle(end))];
-            viewed_assigned = [viewed_assigned, 0];
+            viewed_assigned = []
 
         end
 
@@ -189,10 +189,41 @@ while true
         viewed_angle = [viewed_angle, theta0];
         viewed_time = [viewed_time, new_time];
         viewed_x = [viewed_x, new_x];
-        viewed_y = [viewed_y, new_y];
+        viewed_y = [viewed_y, new_y];% 1. Вычисляем target_angle для всех целей сразу
+target_angle = mod(atan2(y_position, x_position), 2*pi);
 
-        
+% 2. Вычисляем разницу углов (наименьшая угловая дистанция)
+angle_diff = min(mod(abs(target_angle - radar_angle), 2*pi), ...
+                 mod(abs(radar_angle - target_angle), 2*pi));
+
+% 3. Определяем цели, попавшие в луч
+in_beam = angle_diff < angle_resolution_rad/2;
+
+% 4. Добавляем шум и вычисляем новые параметры только для попавших целей
+num_targets = sum(in_beam);
+if num_targets > 0
+    % С расстоянием
+    distances = sqrt(x_position(in_beam).^2 + y_position(in_beam).^2) + muD + sigmaD * randn(1, num_targets);
+
+    % С углом (с шумом)
+    angles = target_angle(in_beam) + muAngle + sigmaAngle * randn(1, num_targets);
+
+    % С временем
+    times = curr_time + muTime + sigmaTime * randn(1, num_targets);
+
+    % Переводим в декартовы координаты
+    x = distances .* cos(angles);
+    y = distances .* sin(angles);
+
+    % Добавляем к существующим спискам
+    viewed_d     = [viewed_d, distances];
+    viewed_angle = [viewed_angle, angles];
+    viewed_time  = [viewed_time, times];
+    viewed_x     = [viewed_x, x];
+    viewed_y     = [viewed_y, y];
+end
     end
+
     
     % --- Обновляем просмотренные цели ---
     set(h_viewed, 'XData', viewed_x, 'YData', viewed_y);
