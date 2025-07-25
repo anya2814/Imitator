@@ -33,9 +33,17 @@ n = 15;
 real_speed =  [20, 30, 15, 27, 35, 20, 30, 15, 27, 35, 20, 30, 15, 27, 35]; % Скорости целей в метрах в секунду
 min_speed = 10; max_speed = 40; % минимальная и максимальная скорость отслеживаемых объектов
 
-% Хранение данных
-true_x = cell(1,n);
-true_y = cell(1,n);
+% Хранение данных о реальных отметках и их отождествлении
+emptyTrue = struct( ...
+    'x', [], ...
+    'y', [], ...
+    'assigned', [], ... % массив с отметками о том отслежена ли отметка от цели и присвоена правильному треку или нет 
+    'track_id', [], ...    % массив о том какому треку была присвоена отметка на предыдущем шаге
+    'prev_track_nums', [], ... % массив с номерами треков с которыми отождествляли отметки от цели
+    'viewed', []);      % попала ли отметка в луч радара (для наглядности проверки)
+
+% Массив структур (размер n)
+true_data = repmat(emptyTrue, n, 1);
 
 % Трекеры, missedDetections - количество пропущенных отметок,
 % notMissedDetections - количество последовательно полученных отметок,
@@ -65,7 +73,7 @@ max_missed_frames = 5; % Максимальное число пропусков 
 
 % Флаг: рисовать график или нет
 DRAW_GRAPHICS = 0;
-tic;
+
 %% Блок для создания графики
     hold on;
 
@@ -113,7 +121,8 @@ while true
     viewed_time = [];
     viewed_x = [];
     viewed_y = [];
-    viewed_assigned = [];
+    viewed_assigned = []; % массив чтобы показать какие из отметок уже были присвоены какой-либо траектории
+    viewed_realnum = []; % показывает цели с каким номером соответствует отметка
 
     %Обновление радара
     radar_angle = mod(radar_angle + omega * deltaT, 2 * pi);
@@ -124,15 +133,19 @@ while true
         % массивы для моделирования ее движения
         r = sqrt(x_position(i)^2 + y_position(i)^2);
 
-        if isempty(true_x{i}) || r >= radius
+        if isempty(true_data(i).x) || r >= radius
             % новая цель
             start_angle = rand() * 2 * pi;
             x_position(i) = radius * cos(start_angle);
             y_position(i) = radius * sin(start_angle);
             theta(i) = mod(atan2(-y_position(i), -x_position(i)), 2*pi) + 2 * rand() - 1;
     
-            true_x{i} = x_position(i);
-            true_y{i} = y_position(i);
+            true_data(i).x = x_position(i);
+            true_data(i).y = y_position(i);
+            true_data(i).assigned = 0;
+            true_data(i).track_id = nan;
+            true_data(i).prev_track_nums = [];
+            true_data(i).viewed = 0;
 
         else % иначе находим ее координаты в соответствии со скоростью и направлением
             dx = real_speed(i) * deltaT * cos(theta(i)) + muX + sigmaX * randn * deltaT;
@@ -140,8 +153,11 @@ while true
             x_position(i) = x_position(i) + dx;
             y_position(i) = y_position(i) + dy;
 
-            true_x{i}=[true_x{i}, x_position(i)];
-            true_y{i}=[true_y{i}, y_position(i)];
+            true_data(i).x(end+1) = x_position(i);
+            true_data(i).y(end+1) = y_position(i);
+            true_data(i).assigned(end+1) = 0;
+            true_data(i).track_id(end+1) = nan;
+            true_data(i).viewed(end+1) = 0;
             
         end
 
@@ -161,8 +177,9 @@ while true
 
             viewed_x = [viewed_x, distance*cos(viewed_angle(end))];
             viewed_y = [viewed_y, distance*sin(viewed_angle(end))];
-            viewed_assigned = [viewed_assigned, 0];
-
+            viewed_assigned = [viewed_assigned, false];
+            viewed_realnum = [viewed_realnum, i]; % в этой ячейке viewed отметка от i-той цели
+            true_data(i).viewed(end) = 1;
         end
 
     end 
@@ -190,7 +207,8 @@ while true
         viewed_time = [viewed_time, new_time];
         viewed_x = [viewed_x, new_x];
         viewed_y = [viewed_y, new_y];
-
+        viewed_assigned = [viewed_assigned, false(1, N_false)];
+        viewed_realnum = [viewed_realnum, nan(1, N_false)];
         
     end
     
@@ -219,8 +237,8 @@ while true
                 pred_angle = mod(atan2(pred_y, pred_x), 2*pi);
 
                 % ищем минимальное расстояние 
-                for i = length(viewed_x):-1:1
-                    if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle
+                for i = 1:length(viewed_x)
+                    if abs(viewed_d(i)-pred_d) <= 6*sigmaD && abs(viewed_angle(i)-pred_angle) <= 6*sigmaAngle && ~viewed_assigned(i)
                         dist = sqrt((pred_x-viewed_x(i))^2+(pred_y-viewed_y(i)));
                         if dist < minDist
                             minDist = dist;
@@ -230,11 +248,10 @@ while true
                 end
 
                 if bestId ~= -1
-                    % добавляем лучшую отметку
+                        
     
                     % если нужно усреднять с предыдущими
                     if time_since_last(t_id) < 0.7*full_rotation_time
-
                         % Обновляем счётчики
                         tracks(t_id) = updateTrackAverage(tracks(t_id), viewed_x(bestId), viewed_y(bestId), viewed_d(bestId), viewed_angle(bestId), curr_time);
                         
@@ -258,16 +275,20 @@ while true
                         tracks(t_id).countForAverage = 1;
                     
                     end
-                    
+
+                    % добавляем лучшую отметку
+                    viewed_assigned(bestId) = true;
+                    obj_num = viewed_realnum(bestId); % какому номеру реальной цели соответствует отметка или nan
+                    if ~isnan(obj_num) && any( true_data(obj_num).prev_track_nums == tracks(t_id).id) % проверка была ли данная цель когда либо отождествлена с данным треком
+                        true_data(obj_num).assigned(end) = 1;
+                        true_data(obj_num).track_id(end) = tracks(t_id).id; % какому треку присвоена отметка
+                    elseif ~isnan(obj_num)
+                        true_data(obj_num).prev_track_nums(end+1) =  tracks(t_id).id; % если нет то запоминаем номер трека
+                        true_data(obj_num).track_id(end) = tracks(t_id).id; % какому треку присвоена отметка
+                    end 
+
                     tracks(t_id).missedDetections = 0;
-    
-                    % Удаляем отождествленную отметку из массива новых отметок
-                    viewed_d(bestId) = [];
-                    viewed_angle(bestId) = [];
-                    viewed_time(bestId) = [];
-                    viewed_x(bestId) = [];
-                    viewed_y(bestId) = [];
-    
+        
                 else
                     % проверяем, попадает ли предсказанное значение отметки в
                     % область видимости радара
@@ -282,13 +303,24 @@ while true
             end
         end
 
+        % Сначала находим вторые точки для треков
+        expired_track_ids = false(1, length(tracks)); % логический вектор для пометки
+
+        % Удаляем assigned
+        viewed_d         = viewed_d(~viewed_assigned);
+        viewed_angle     = viewed_angle(~viewed_assigned);
+        viewed_time      = viewed_time(~viewed_assigned);
+        viewed_x         = viewed_x(~viewed_assigned);
+        viewed_y         = viewed_y(~viewed_assigned);
+        viewed_assigned  = viewed_assigned(~viewed_assigned);
+
         %% Затем находим вторые точки для траектории (завязка траектории)
-        for t_id = length(tracks):-1:1
+        for t_id = 1:length(tracks)
             if length(tracks(t_id)) == 1 % проверка что в треке 1 точка
                 flag = 0; % для первой подходящей точки записываем в этот же трек, 
                             % для других подходящих копируем трек
                 % проверяем расстояние 
-                for i = length(viewed_x):-1:1                   
+                for i = 1:length(viewed_x)                 
                     distance = sqrt((viewed_x(i) - tracks(t_id).x(end))^2 + (viewed_y(i) - tracks(t_id).y(end))^2);
                     max_distance = max_speed*(curr_time-tracks(t_id).timestamps(end)) + 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % максимальная дистанция для попадания в строб
                     min_distance = min_speed*(curr_time-tracks(t_id).timestamps(end)) - 0.03*sqrt(viewed_x(i)^2+viewed_y(i)^2); % минимальная дистанция для попадания в строб
@@ -328,13 +360,18 @@ while true
                     
                         tracks(t_id).missedDetections = 0;
         
-                        % Удаляем отождествленную отметку из массива новых отметок
-                        viewed_d(i) = [];
-                        viewed_angle(i) = [];
-                        viewed_time(i) = [];
-                        viewed_x(i) = [];
-                        viewed_y(i) = [];
-
+                        % Отмечаем что точка присвоена траектории
+                        viewed_assigned(i) = true;
+                        obj_num = viewed_realnum(i); % какому номеру реальной цели соответствует отметка или nan
+                        if ~isnan(obj_num) && any( true_data(obj_num).prev_track_nums == tracks(t_id).id) % проверка была ли данная цель когда либо отождествлена с данным треком
+                            true_data(obj_num).assigned(end) = 1;
+                            true_data(obj_num).track_id(end) = tracks(t_id).id; % какому треку присвоена отметка
+                        elseif ~isnan(obj_num)
+                            true_data(obj_num).prev_track_nums(end+1) =  tracks(t_id).id; % если нет то запоминаем номер трека
+                            true_data(obj_num).track_id(end) = tracks(t_id).id; % какому треку присвоена отметка
+                        end 
+    
+                        tracks(t_id).missedDetections = 0;
                         flag = 1;
                     end
                 end
@@ -343,12 +380,29 @@ while true
                 % Получается если на следующем обороте не нашли вторую
                 % отметку то удаляем траекторию
                 if flag == 0 && (time_since_last(t_id)) > (full_rotation_time*1.5)
-                    tracks(t_id) = [];
+                    expired_track_ids(t_id) = true;
                 end
             end
         end
-    
-        %% Оставшиеся точки сохраняем как возможные стартовые для новой траектории
+
+    % Удаляем траектории
+    tracks(expired_track_ids) = [];
+
+     % удаление старых треков
+    if ~isempty(tracks) && isstruct(tracks)
+        tracks = tracks([tracks.missedDetections] < max_missed_frames);
+    end
+
+    % Удаляем assigned
+        viewed_d         = viewed_d(~viewed_assigned);
+        viewed_angle     = viewed_angle(~viewed_assigned);
+        viewed_time      = viewed_time(~viewed_assigned);
+        viewed_x         = viewed_x(~viewed_assigned);
+        viewed_y         = viewed_y(~viewed_assigned);
+        viewed_assigned  = viewed_assigned(~viewed_assigned);
+        viewed_realnum   = viewed_realnum(~viewed_assigned);
+
+    %% Оставшиеся точки сохраняем как возможные стартовые для новой траектории
         nNew = length(viewed_x);
         if isempty(tracks) || ~isstruct(tracks)
             last_id = 0;
@@ -369,15 +423,18 @@ while true
             new_tracks(i).velocity = NaN;
             new_tracks(i).countForAverage = 1;
             new_tracks(i).P = eye(4);
+
+
+            % добавляем лучшую отметку
+            obj_num = viewed_realnum(i); % какому номеру реальной цели соответствует отметка или nan
+            if ~isnan(obj_num)
+                true_data(obj_num).assigned(end) = 1;
+                true_data(obj_num).prev_track_nums(end+1) = new_tracks(i).id;
+                true_data(obj_num).track_id(end) = new_tracks(i).id; % какому треку присвоена отметка
+            end 
         end
 
         tracks = [tracks, new_tracks];
-    end
-
-    % удаление старых треков
-    if ~isempty(tracks) && isstruct(tracks)
-        tracks = tracks([tracks.missedDetections] < max_missed_frames);
-    end
     
     % Здесь фильтр Калмана
     for t_id = 1:length(tracks)
@@ -394,6 +451,7 @@ while true
             tracks(t_id).filtered = 1;
         end
     end
+end
 
     % Можно смотреть результаты на графике после нескольких секунд
     if curr_time > 30 && curr_time < 30.5
@@ -405,8 +463,8 @@ while true
     %% рисование можно отключать
     if DRAW_GRAPHICS
         % --- Обновляем истинные позиции ---
-        for i = 1:length(true_x)
-            set(h_true(i), 'XData', true_x{i}, 'YData', true_y{i});
+        for i = 1:length(true_data)
+            set(h_true(i), 'XData', true_data(i).x, 'YData', true_data(i).y);
         end
 
         % --- Обновляем луч радара ---
@@ -439,9 +497,16 @@ while true
         drawnow limitrate;
     end
 
-    if curr_time > 30
-        stop = 0; % Чтобы смотреть результат
+    if curr_time > 10 && flag
+        tic;
+        flag = 0;
+
     end
+    if curr_time > 50 && ~flag
+        stop = 0; % Чтобы смотреть результат
+        flag = 1;
+    end
+            
     curr_time = curr_time + deltaT;
     
 end
