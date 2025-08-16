@@ -1,0 +1,79 @@
+function is_valid_tie = computeTrackingMask(track_ids)
+% computeTrackingMask - определяет интервалы, когда цель отслеживалась
+%
+% Вход:
+%   track_ids - массив track_id, где NaN означает отсутствие присвоения
+%
+% Выход:
+%   is_tracked - логический массив той же длины, где true означает, что цель отслеживалась
+%   ratio - отношение времени отслеживания
+
+    N = length(track_ids);
+    isnan_mask = isnan(track_ids);
+
+    % Разбиваем на группы подряд идущих non-NaN
+    group_indices = bwlabel(~isnan_mask);
+    num_groups = max(group_indices);
+
+    group_tracks = cell(1, num_groups);
+    group_ranges = cell(1, num_groups);
+
+    for g = 1:num_groups
+        idx = find(group_indices == g);
+        group_ranges{g} = idx;
+
+        ids = track_ids(idx);
+        ids = ids(~isnan(ids));  % удаляем случайные NaN
+
+        [unique_ids, ~, uidx] = unique(ids);
+        counts = accumarray(uidx, 1);
+
+        % Сохраняем треки, где >= 3 отметок
+        group_tracks{g} = unique_ids(counts >= 3);
+    end
+
+    % --- Проверка правильной завязки (в 2 из 3 первых групп) ---
+    if num_groups < 3
+        is_valid_tie = false;
+    else
+        all_tracks = [group_tracks{1}, group_tracks{2}, group_tracks{3}];
+        [unique_ids, ~, idx] = unique(all_tracks);
+        counts = accumarray(idx, 1);
+        
+        is_valid_tie = any(counts >= 2);  % есть ли трек, встречающийся хотя бы 2 раза
+    end
+    
+    % Восстанавливаем промежутки
+    is_tracked = false(1, N);
+
+    for g = 1:num_groups
+        % Отмечаем текущую группу, если есть подходящий трек
+        if ~isempty(group_tracks{g})
+            is_tracked(group_ranges{g}) = true;
+        end
+
+        % Проверяем соседние группы
+        for next = [g+1, g+2]
+            if next <= num_groups
+                common_tracks = intersect(group_tracks{g}, group_tracks{next});
+                if ~isempty(common_tracks)
+                    inter_range = (group_ranges{g}(end)+1):(group_ranges{next}(1)-1);
+                    is_tracked(inter_range) = true;
+                end
+            end
+        end
+    end
+
+    ratio = sum(is_tracked) / length(track_ids);
+
+    filename = 'tracking_ratios.txt';
+
+    % Открыть файл для дозаписи (или создать, если нет)
+    fid = fopen(filename, 'a');  % 'a' означает append (добавить в конец)
+    
+    % Записать число с переводом строки
+    fprintf(fid, '%.6f\n', ratio);
+    
+    % Закрыть файл
+    fclose(fid);
+end

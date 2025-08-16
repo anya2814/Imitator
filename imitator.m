@@ -13,6 +13,12 @@ ylim([-radius, radius]);
 xlabel('X Axis');
 ylabel('Y Axis');
 
+% Для расчета
+valid_ties = 0; % подсчет правильных завязок
+trajectories_count = 0; % всего траекторий от реальных целей
+false_marks_count = 0; % подсчет ложных отметок
+false_ties = 0; % подсчет ложных завязок
+
 % Параметры шума
 muX = 0; muY = 0;
 sigmaX = 1; sigmaY = 1;
@@ -133,6 +139,30 @@ while true
         % массивы для моделирования ее движения
         r = sqrt(x_position(i)^2 + y_position(i)^2);
 
+        if r >= radius && length(true_data(i).track_id) > 100
+            is_valid = computeTrackingMask(true_data(i).track_id);
+            valid_ties = valid_ties + is_valid;
+            trajectories_count = trajectories_count + 1;
+        
+            updateGraphics(true_data, h_true, radar_angle, angle_resolution_rad, ...
+                           radius, h_beam, tracks, h_tracks, N_TRACKS);
+        
+            % --- Если накопили 50 завершённых траекторий ---
+            if trajectories_count == 50
+                ratio = valid_ties / trajectories_count;
+        
+                % --- Запись в файл ---
+                filename = 'valid_ratio.txt';
+                fid = fopen(filename, 'a');  % append
+                fprintf(fid, '%.6f\n', ratio);
+                fclose(fid);
+        
+                % --- Обнулить счётчики ---
+                valid_ties = 0;
+                trajectories_count = 0;
+            end
+        end
+
         if isempty(true_data(i).x) || r >= radius
             % новая цель
             start_angle = rand() * 2 * pi;
@@ -184,7 +214,23 @@ while true
 
     end 
 
+    if false_marks_count > 1000
+        ratio = false_ties / false_marks_count;
+    
+        filename = 'false_tracking_ratios.txt';
+    
+        % Открываем файл для дозаписи, записываем и закрываем
+        fid = fopen(filename, 'a');  
+        fprintf(fid, '%.6f\n', ratio);
+        fclose(fid);
+    
+        % Обнуляем счетчики
+        false_ties = 0;
+        false_marks_count = 0;
+    end
+        
     N_false = poissrnd(lambda*radius^2*angle_resolution_rad/(2*pi)); % Количество ложных целей
+    false_marks_count = false_marks_count + N_false; % подсчет ложных отметок
 
     %Добавляем ложные отметки к массиву отметок полученных на данном шаге 
     if N_false > 0
@@ -339,6 +385,12 @@ while true
                             %    tracks(end + 1) = new_track;  % Добавляем новый трек в массив tracks
                             %end % Вставляем точку
 
+                            % проверка на ложную завязку
+                            obj_num = viewed_realnum(i); % какому номеру реальной цели соответствует отметка или nan
+                            if isnan(obj_num)
+                                false_ties = false_ties + 1;
+                            end
+
                             tracks(t_id).distance(end+1) = viewed_d(i);
                             tracks(t_id).angle(end+1) = viewed_angle(i);
                             tracks(t_id).x(end+1) = viewed_x(i);
@@ -453,60 +505,17 @@ while true
     end
 end
 
-    % Можно смотреть результаты на графике после нескольких секунд
-    if curr_time > 30 && curr_time < 30.5
-        DRAW_GRAPHICS = 1;
-        elapsed = toc;    % Останавливает таймер и возвращает прошедшее время в секундах
-        fprintf('Время выполнения: %.4f секунд\n', elapsed);
-    end
-
     %% рисование можно отключать
     if DRAW_GRAPHICS
-        % --- Обновляем истинные позиции ---
-        for i = 1:length(true_data)
-            set(h_true(i), 'XData', true_data(i).x, 'YData', true_data(i).y);
-        end
-
-        % --- Обновляем луч радара ---
-        beam_x = radius * cos(radar_angle);
-        beam_y = radius * sin(radar_angle);
-        set(h_beam(1), 'XData', [0 beam_x], 'YData', [0 beam_y]);
-    
-        beam_x = radius * cos(radar_angle + angle_resolution_rad/2);
-        beam_y = radius * sin(radar_angle + angle_resolution_rad/2);
-        set(h_beam(2), 'XData', [0 beam_x], 'YData', [0 beam_y]);
-    
-        beam_x = radius * cos(radar_angle - angle_resolution_rad/2);
-        beam_y = radius * sin(radar_angle - angle_resolution_rad/2);
-        set(h_beam(3), 'XData', [0 beam_x], 'YData', [0 beam_y]);
-    
-        % --- Обновляем треки ---
-        for t_id = 1:min(length(tracks), N_TRACKS)
-            if length(tracks(t_id).x) > 1
-                set(h_tracks(t_id), 'XData', tracks(t_id).x, 'YData', tracks(t_id).y);
-            else 
-                set(h_tracks(t_id), 'MarkerFaceColor', "#C0C0C0", 'XData', tracks(t_id).x, 'YData', tracks(t_id).y);
-            end
-        end
-        % Скрываем неиспользуемые треки
-        for t_id = length(tracks)+1:N_TRACKS
-            set(h_tracks(t_id), 'XData', nan, 'YData', nan);
-        end
-        
-    
-        drawnow limitrate;
+        updateGraphics(true_data, h_true, radar_angle, angle_resolution_rad, ...
+                   radius, h_beam, tracks, h_tracks, N_TRACKS);
     end
 
-    if curr_time > 10 && flag
-        tic;
-        flag = 0;
+    % Можно смотреть результаты на графике после нескольких секунд
+    if curr_time > 10000
+        DRAW_GRAPHICS = 1;
+    end
 
-    end
-    if curr_time > 50 && ~flag
-        stop = 0; % Чтобы смотреть результат
-        flag = 1;
-    end
-            
     curr_time = curr_time + deltaT;
     
 end
